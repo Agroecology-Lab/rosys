@@ -23,8 +23,11 @@ class GnssZEDF9P(Gnss):
 
     # Maximum allowed timestamp difference in seconds
     MAX_TIMESTAMP_DIFF = 0.05
+    HISTORY_SAMPLE_PERIOD_S = 1
+    TOTAL_HISTORY_SAMPLE_DURATION_S = 120
 
     def __init__(self, *, antenna_pose: Pose | None, reconnect_interval: float = 3.0) -> None:
+        self.sample_history = []
         """
         :param antenna_pose: the pose of the main antenna in the robot's coordinate frame (yaw: direction to the auxiliary antenna)
         :param reconnect_interval: the interval to wait before reconnecting to the device
@@ -150,6 +153,8 @@ class GnssZEDF9P(Gnss):
             altitude=altitude,
         )
         self.NEW_MEASUREMENT.emit(self.last_measurement)
+        self.update_sample_history(self.last_measurement)
+
 
     def _find_device(self) -> str:
         for port in list_ports.comports():
@@ -167,4 +172,45 @@ class GnssZEDF9P(Gnss):
         except serial.SerialException as e:
             raise RuntimeError(f'Could not connect to ZED-F9P device: {port}') from e
 
+
+
+
+    def update_sample_history(self, latest_sample: GnssMeasurement):
+        """
+        Save samples in to a buffer periodically, for GPS drift analysis.
+        """
+        if not latest_sample.gps_quality in [GpsQuality.RTK_FIXED, GpsQuality.RTK_FLOAT, GpsQuality.GPS]:
+            return
+        
+        current_time = rosys.time()
+        if not self.sample_history or current_time - self.sample_history[-1][0] > self.HISTORY_SAMPLE_PERIOD_S:
+            self.sample_history.append((current_time, latest_sample))
+        
+        while self.sample_history and current_time - self.sample_history[0][0] > self.TOTAL_HISTORY_SAMPLE_DURATION_S:
+            self.sample_history.pop(0)
+
+
+
+
+    def print_sample_history_stats(self):
+        if len(self.sample_history) < 2:
+            return
+        oldest_sample = self.sample_history[0][1]
+        newest_sample = self.sample_history[-1][1]
+        data_duration = newest_sample.time - oldest_sample.time
+        # NOTE: Assuming GeoPoint has a distance method or similar utility is available
+        # If not, a helper function would be needed, similar to gps_tools.get_distance
+        # For now, let's assume a utility to calculate distance between GeoPoints exists or can be added.
+        # For simplicity, we'll just log the coordinates difference for now.
+                # To calculate distance, we need a utility function. 
+        
+        self.log.info(f"GPS history - oldest: (lat={oldest_sample.pose.lat:.8f}, lon={oldest_sample.pose.lon:.8f}), newest: (lat={newest_sample.pose.lat:.8f}, lon={newest_sample.pose.lon:.8f}), total time: {data_duration:.3f}, {len(self.sample_history)} samples")
+        # If a distance calculation utility is available, uncomment and use the following:
+        # distance_oldest_newest = rosys.geometry.get_distance(newest_sample.pose, oldest_sample.pose)
+        # max_distance = 0
+        # for sample in self.sample_history:
+        #     distance = rosys.geometry.get_distance(newest_sample.pose, sample[1].pose)
+        #     if distance > max_distance:
+        #         max_distance = distance
+        # self.log.info(f"GPS history - oldest-newest distance: {distance_oldest_newest:.3f}, max distance in samples: {max_distance:.3f}, total time: {data_duration:.3f}, {len(self.sample_history)} samples")
 
