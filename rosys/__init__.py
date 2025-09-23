@@ -22,6 +22,7 @@ from .rosys import (
     time,
     translator,
     uptime,
+    GnssZEDF9P,      
 )
 from .simulation_ui import simulation_ui
 from .version import __version__
